@@ -1,0 +1,401 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Navbar from "../components/Navbar";
+import ProductCard from "../components/ProductCard";
+import db from "../lib/db";
+import type { Product } from "../data/products";
+import { Filter, ChevronDown, Search } from "lucide-react";
+
+// Get user session
+const sessionId = Astro.cookies.get("session_id")?.value;
+let user = null;
+if (sessionId) {
+    user = db
+        .prepare(
+            `
+        SELECT u.username, u.email 
+        FROM users u 
+        JOIN sessions s ON u.id = s.user_id 
+        WHERE s.id = ? AND s.expires_at > ?
+    `,
+        )
+        .get(sessionId, new Date().toISOString()) as {
+        username: string;
+        email: string;
+    } | null;
+}
+
+// Filter & Sort Logic
+const url = Astro.url;
+const page = Number(url.searchParams.get("page")) || 1;
+const category = url.searchParams.get("category") || "";
+const minPrice = Number(url.searchParams.get("minPrice"));
+const maxPrice = Number(url.searchParams.get("maxPrice"));
+const sort = url.searchParams.get("sort") || "latest";
+const query = url.searchParams.get("q") || "";
+
+const limit = 20;
+const offset = (page - 1) * limit;
+
+// Build SQL Query
+let sql = "SELECT * FROM products WHERE 1=1";
+let countSql = "SELECT COUNT(*) as count FROM products WHERE 1=1";
+const params = [];
+
+if (category) {
+    sql += " AND category = ?";
+    countSql += " AND category = ?";
+    params.push(category);
+}
+
+if (minPrice && minPrice > 0) {
+    sql += " AND price >= ?";
+    countSql += " AND price >= ?";
+    params.push(minPrice);
+}
+
+if (maxPrice && maxPrice > 0) {
+    sql += " AND price <= ?";
+    countSql += " AND price <= ?";
+    params.push(maxPrice);
+}
+
+if (query) {
+    sql += " AND name LIKE ?";
+    countSql += " AND name LIKE ?";
+    params.push(`%${query}%`);
+}
+
+// Sorting
+switch (sort) {
+    case "price_asc":
+        sql += " ORDER BY price ASC";
+        break;
+    case "price_desc":
+        sql += " ORDER BY price DESC";
+        break;
+    case "latest":
+    default:
+        sql += " ORDER BY created_at DESC";
+        break;
+}
+
+sql += " LIMIT ? OFFSET ?";
+const queryParams = [...params, limit, offset];
+
+// Execute Query
+const productsQuery = db.prepare(sql).all(...queryParams) as any[];
+const products = productsQuery.map((p) => ({
+    ...p,
+    isAd: Boolean(p.isAd),
+})) as Product[];
+
+const totalProducts = (db.prepare(countSql).get(...params) as { count: number })
+    .count;
+const totalPages = Math.ceil(totalProducts / limit);
+
+const categories = [
+    "Makanan Kucing",
+    "Mainan Kucing",
+    "Peralatan",
+    "Obat & Vitamin",
+    "Aksesori",
+    "Kandang",
+];
+
+const prices = [
+    { label: "< Rp 50.000", min: 0, max: 49999 },
+    { label: "Rp 50rb - Rp 100rb", min: 50000, max: 100000 },
+    { label: "Rp 100rb - Rp 500rb", min: 100000, max: 500000 },
+    { label: "> Rp 500rb", min: 500001, max: 999999999 },
+];
+---
+
+<Layout title="Belanja - Cat Market">
+    <Navbar client:load user={user} />
+
+    <main class="min-h-screen pt-[120px] md:pt-[140px] bg-gray-50 pb-20">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row gap-6">
+                {/* Sidebar Filter */}
+                <aside class="w-full md:w-1/4 lg:w-1/5 hidden md:block">
+                    <form
+                        action="/market"
+                        method="get"
+                        class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sticky top-[140px]"
+                    >
+                        <div
+                            class="flex items-center justify-between mb-4 pb-2 border-b border-gray-100"
+                        >
+                            <h3
+                                class="font-bold text-gray-800 flex items-center gap-2"
+                            >
+                                <Filter className="w-4 h-4" /> Filter
+                            </h3>
+                            <a
+                                href="/market"
+                                class="text-xs text-primary font-medium hover:underline"
+                                >Reset</a
+                            >
+                        </div>
+
+                        {/* Search in Sidebar */}
+                        <div class="mb-6 relative">
+                            <input
+                                type="text"
+                                name="q"
+                                value={query}
+                                placeholder="Cari produk..."
+                                class="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:outline-none focus:border-primary transition-colors"
+                            />
+                            <Search
+                                className="w-4 h-4 text-gray-400 absolute left-3 top-2.5"
+                            />
+                        </div>
+
+                        {/* Kategori */}
+                        <div class="mb-6">
+                            <h4 class="font-bold text-gray-800 mb-3 text-sm">
+                                Kategori
+                            </h4>
+                            <div class="space-y-2">
+                                {
+                                    categories.map((cat, idx) => (
+                                        <label class="flex items-center gap-2 cursor-pointer group">
+                                            <input
+                                                type="radio"
+                                                name="category"
+                                                value={cat}
+                                                checked={category === cat}
+                                                onchange="this.form.submit()"
+                                                class="rounded-full border-gray-300 text-primary focus:ring-primary h-4 w-4"
+                                            />
+                                            <span
+                                                class={`text-sm group-hover:text-primary transition-colors ${category === cat ? "text-primary font-medium" : "text-gray-600"}`}
+                                            >
+                                                {cat}
+                                            </span>
+                                        </label>
+                                    ))
+                                }
+                            </div>
+                        </div>
+
+                        {/* Harga */}
+                        <div class="mb-6">
+                            <h4 class="font-bold text-gray-800 mb-3 text-sm">
+                                Harga
+                            </h4>
+                            <div class="space-y-2">
+                                {
+                                    prices.map((price, idx) => (
+                                        <label class="flex items-center gap-2 cursor-pointer group">
+                                            <input
+                                                type="radio"
+                                                name="price_range"
+                                                value={`${price.min}-${price.max}`}
+                                                checked={
+                                                    minPrice === price.min &&
+                                                    maxPrice === price.max
+                                                }
+                                                onchange={`
+                                                document.getElementById('minPriceInput').value = '${price.min}';
+                                                document.getElementById('maxPriceInput').value = '${price.max}';
+                                                this.form.submit();
+                                            `}
+                                                class="rounded-full border-gray-300 text-primary focus:ring-primary h-4 w-4"
+                                            />
+                                            <span
+                                                class={`text-sm group-hover:text-primary transition-colors ${minPrice === price.min ? "text-primary font-medium" : "text-gray-600"}`}
+                                            >
+                                                {price.label}
+                                            </span>
+                                        </label>
+                                    ))
+                                }
+                            </div>
+                            {/* Hidden inputs for actual price query */}
+                            <input
+                                type="hidden"
+                                name="minPrice"
+                                id="minPriceInput"
+                                value={minPrice || ""}
+                            />
+                            <input
+                                type="hidden"
+                                name="maxPrice"
+                                id="maxPriceInput"
+                                value={maxPrice || ""}
+                            />
+                            <input type="hidden" name="sort" value={sort} />
+                        </div>
+                    </form>
+                </aside>
+
+                {/* Main Content */}
+                <div class="w-full md:w-3/4 lg:w-4/5">
+                    {/* Header & Sort */}
+                    <div
+                        class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col sm:flex-row justify-between items-center gap-4"
+                    >
+                        <h1 class="text-lg font-bold text-gray-800">
+                            {
+                                query
+                                    ? `Hasil pencarian "${query}"`
+                                    : "Semua Produk"
+                            }
+                            <span class="text-gray-400 font-normal text-sm ml-2"
+                                >({totalProducts} barang)</span
+                            >
+                        </h1>
+
+                        <div class="flex items-center gap-2 w-full sm:w-auto">
+                            <span
+                                class="text-sm text-gray-500 whitespace-nowrap"
+                                >Urutkan:</span
+                            >
+                            <div class="relative w-full sm:w-48">
+                                <form action="/market" method="get">
+                                    <input
+                                        type="hidden"
+                                        name="category"
+                                        value={category}
+                                    />
+                                    <input
+                                        type="hidden"
+                                        name="minPrice"
+                                        value={minPrice || ""}
+                                    />
+                                    <input
+                                        type="hidden"
+                                        name="maxPrice"
+                                        value={maxPrice || ""}
+                                    />
+                                    <input
+                                        type="hidden"
+                                        name="q"
+                                        value={query}
+                                    />
+                                    <select
+                                        name="sort"
+                                        onchange="this.form.submit()"
+                                        class="w-full appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-primary text-sm cursor-pointer hover:border-primary transition-colors"
+                                    >
+                                        <option
+                                            value="latest"
+                                            selected={sort === "latest"}
+                                            >Terbaru</option
+                                        >
+                                        <option
+                                            value="price_asc"
+                                            selected={sort === "price_asc"}
+                                            >Harga Terendah</option
+                                        >
+                                        <option
+                                            value="price_desc"
+                                            selected={sort === "price_desc"}
+                                            >Harga Tertinggi</option
+                                        >
+                                    </select>
+                                    <div
+                                        class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700"
+                                    >
+                                        <ChevronDown className="w-4 h-4" />
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Mobile Filter Toggle */}
+                    <button
+                        class="md:hidden w-full bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-center gap-2 mb-4 text-gray-700 font-medium hover:border-primary hover:text-primary transition-colors"
+                    >
+                        <Filter className="w-4 h-4" /> Filter & Kategori
+                    </button>
+
+                    {/* Product Grid */}
+                    <div
+                        class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
+                    >
+                        {
+                            products.length > 0 ? (
+                                products.map((product) => (
+                                    <div class="h-full">
+                                        <ProductCard
+                                            client:visible
+                                            {...product}
+                                            title={product.name}
+                                        />
+                                    </div>
+                                ))
+                            ) : (
+                                <div class="col-span-full py-20 text-center bg-white rounded-xl border border-gray-100 p-8">
+                                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4 text-gray-400">
+                                        <Search className="w-8 h-8" />
+                                    </div>
+                                    <h3 class="text-lg font-bold text-gray-800 mb-2">
+                                        Tidak ada produk ditemukan
+                                    </h3>
+                                    <p class="text-gray-500 mb-6">
+                                        Coba kurangi filter atau gunakan kata
+                                        kunci lain.
+                                    </p>
+                                    <a
+                                        href="/market"
+                                        class="bg-primary text-white px-6 py-2 rounded-lg font-bold hover:bg-orange-600 transition-colors"
+                                    >
+                                        Reset Filter
+                                    </a>
+                                </div>
+                            )
+                        }
+                    </div>
+
+                    {/* Pagination */}
+                    {
+                        totalPages > 1 && (
+                            <div class="mt-12 flex justify-center">
+                                <nav class="flex gap-2">
+                                    <a
+                                        href={
+                                            page > 1
+                                                ? `?page=${page - 1}&category=${category}&minPrice=${minPrice || ""}&maxPrice=${maxPrice || ""}&sort=${sort}&q=${query}`
+                                                : "#"
+                                        }
+                                        class={`px-4 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 flex items-center gap-1 ${page <= 1 ? "pointer-events-none opacity-50" : ""}`}
+                                    >
+                                        Previous
+                                    </a>
+
+                                    {Array.from(
+                                        { length: totalPages },
+                                        (_, i) => i + 1,
+                                    ).map((p) => (
+                                        <a
+                                            href={`?page=${p}&category=${category}&minPrice=${minPrice || ""}&maxPrice=${maxPrice || ""}&sort=${sort}&q=${query}`}
+                                            class={`w-10 h-10 flex items-center justify-center rounded-lg font-medium transition-all ${p === page ? "bg-primary text-white shadow-md shadow-orange-200 scale-105" : "border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-primary"}`}
+                                        >
+                                            {p}
+                                        </a>
+                                    ))}
+
+                                    <a
+                                        href={
+                                            page < totalPages
+                                                ? `?page=${page + 1}&category=${category}&minPrice=${minPrice || ""}&maxPrice=${maxPrice || ""}&sort=${sort}&q=${query}`
+                                                : "#"
+                                        }
+                                        class={`px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:text-primary hover:bg-gray-50 flex items-center gap-1 transition-colors ${page >= totalPages ? "pointer-events-none opacity-50" : ""}`}
+                                    >
+                                        Next
+                                    </a>
+                                </nav>
+                            </div>
+                        )
+                    }
+                </div>
+            </div>
+        </div>
+    </main>
+</Layout>
