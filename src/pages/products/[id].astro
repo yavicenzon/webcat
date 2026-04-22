@@ -15,6 +15,20 @@ import {
     Store,
 } from "lucide-react";
 
+export function getStaticPaths() {
+    const productIds = db
+        .prepare(
+            `
+    SELECT id FROM products
+`,
+        )
+        .all() as { id: string | number }[];
+
+    return productIds.map((product) => ({
+        params: { id: String(product.id) },
+    }));
+}
+
 const { id } = Astro.params;
 
 if (!id) {

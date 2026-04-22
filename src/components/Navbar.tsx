@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, ShoppingCart, Bell, Mail, MapPin, Store, Menu, User, ChevronDown, Smartphone } from 'lucide-react';
+import { Search, ShoppingCart, Bell, Mail, MapPin, Store, User, ChevronDown, Smartphone } from 'lucide-react';
 import { LogoText } from './Logo';
 
 interface NavbarProps {
